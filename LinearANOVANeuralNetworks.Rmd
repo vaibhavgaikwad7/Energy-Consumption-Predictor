@@ -1,0 +1,306 @@
+---
+output:
+  pdf_document: default
+  html_document: default
+---
+```{r}
+library(tidyverse)
+```
+
+```{r}
+df2 <- read_csv('/Users/punamichowdary/Downloads/final_dataset_less_columns.csv')
+```
+
+
+```{r}
+df <- df2
+```
+
+
+```{r}
+selected_columns <- c(1, 2,45, 46)
+df[selected_columns]
+```
+
+
+```{r}
+df$datetime <- as.POSIXct(df$datetime)
+```
+
+
+```{r}
+# Group by building ID and calculating total energy usage
+building_totals <- df %>% group_by(bldg_id) %>% 
+  summarize(total_energy_usage = sum(total_energy_usage), .groups = "drop")
+```
+```{r}
+parquet_file <- "/Users/punamichowdary/Downloads/static_house_info.parquet"
+
+house_static_data <- arrow::read_parquet(parquet_file)
+```
+
+```{r}
+house_total <- merge(building_totals, house_static_data, by = "bldg_id")
+```
+
+```{r}
+house_total$energy_per_sqft <- house_total$total_energy_usage / house_total$in.sqft
+```
+
+```{r}
+# Convert character columns to factors
+house_total <- house_total %>% mutate_if(is.character, as.factor)
+```
+
+```{r}
+house_total %>% mutate_if(~ !is.numeric(.), as.factor)
+```
+
+
+```{r}
+anova_result <- aov(energy_per_sqft ~in.roof_material, data = house_total)
+
+summary(anova_result)
+```
+
+```{r}
+# setting the significance level
+#significance_level <- 0.0000000000000000000000000000000000000000005
+significance_level <- 0.05
+
+# taking only columns with two or more factors
+factor_columns <- sapply(house_total, function(x) is.factor(x) && length(levels(x)) >= 2)
+
+significant_columns <- c()
+
+# Looping through each column 
+for (col in names(house_total)[factor_columns]) {
+  formula <- as.formula(paste("total_energy_usage ~", col))
+  anova_result <- aov(formula, data = house_total)
+  
+  # p-value < significance level
+  if (summary(anova_result)[[1]][["Pr(>F)"]][1] < significance_level) {
+    significant_columns <- c(significant_columns, col)
+  }
+}
+
+cat("Columns with significant ANOVA results:", paste(significant_columns, collapse = ", "), "\n")
+
+```
+
+```{r}
+ggplot(house_total, aes(reorder(x = in.lighting, -total_energy_usage), y = total_energy_usage)) +
+  geom_bar(stat = "summary", fun = "mean", fill = "#b4d3b2") +
+  labs(x="Type of Lighting",  y = "Average Energy Consumption") + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+```{r}
+ggplot(house_total, aes(x = in.roof_material, y = total_energy_usage)) +
+  geom_boxplot() +
+  labs(x="Type of Roof Material", y = "Energy Consumption")+ theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+library(ggplot2)
+
+ggplot(house_total, aes(x =in.insulation_floor, y = total_energy_usage)) +
+  geom_boxplot() +
+  stat_summary(fun = "mean", geom = "point", shape = 18, size = 3) +
+  labs(title = "Average Energy Consumption", y = "Average Energy Consumption") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+
+```{r}
+column_string <- "in.ceiling_fan, in.clothes_dryer, in.clothes_washer, in.cooking_range, in.cooling_setpoint, in.county, in.county_and_puma, in.dishwasher, in.ducts, in.geometry_floor_area, in.geometry_floor_area_bin, in.geometry_garage, in.has_pv, in.heating_setpoint, in.hot_water_fixtures, in.income, in.income_recs_2015, in.income_recs_2020, in.infiltration, in.insulation_wall, in.lighting, in.misc_hot_tub_spa, in.misc_pool, in.misc_pool_heater, in.misc_pool_pump, in.occupants, in.plug_load_diversity, in.puma, in.pv_orientation, in.pv_system_size, in.usage_level, in.vacancy_status, in.vintage, in.vintage_acs, in.weather_file_city, upgrade.water_heater_efficiency, upgrade.infiltration_reduction, upgrade.clothes_dryer, upgrade.insulation_wall, upgrade.cooking_range"
+
+your_column_list <- strsplit(column_string, ", ")[[1]]
+```
+
+
+
+```{r}
+# Looping through each significant variable and plotting it 
+library(ggplot2)
+
+plot_list <- list()
+
+for (column in your_column_list) {
+  plot <- ggplot(house_total, aes(x = reorder(!!as.name(column), -total_energy_usage), y = total_energy_usage)) +
+    geom_bar(stat = "summary", fun = "mean", fill = "skyblue") +
+    labs(title = paste("Average Energy Consumption -", column), y = "Average Total Energy Consumption") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+    
+  plot_list[[column]] <- plot
+}
+
+for (plot in plot_list) {
+  print(plot)
+}
+
+```
+
+
+# Aggregating by day per building 
+
+```{r}
+colnames(df)[colnames(df) == "Dry Bulb Temperature [°C]"] <- "temp"
+colnames(df)[colnames(df) == "Relative Humidity [%]"] <- "relative_humidity"
+colnames(df)[colnames(df) == "Wind Direction [Deg]"] <- "wind_direction"
+colnames(df)[colnames(df) == "wid_direction"] <- "wind_direction"
+colnames(df)[colnames(df) == "Direct Normal Radiation [W/m2]"] <- "normal_radiation"
+```
+
+
+```{r}
+linear_model <- lm(total_energy_usage ~. , data = df[, 3:53])
+
+summary(linear_model)
+```
+
+```{r}
+# getting a list of all the house_energy columns that are significant predictors
+summary_result <- summary(linear_model)
+
+significant_coeffs <- (summary_result$coefficients[,"Pr(>|t|)"] < 0.005)
+significant_predictors <- summary_result$coefficients[significant_coeffs, ]
+paste(rownames(significant_predictors), collapse = ", ")
+```
+
+
+```{r}
+library(rlang)
+```
+
+
+```{r}
+aggregated_by_day <- df %>%
+  group_by(bldg_id, date) %>%
+  summarize(
+    total_energy = sum(total_energy_usage),
+    mean_temperature = mean(`temp`)
+  )
+```
+
+
+```{r}
+aggregated_by_day
+```
+
+```{r}
+column_string2 <- "in.county, in.ceiling_fan, in.clothes_dryer, in.clothes_washer, in.cooking_range, in.cooling_setpoint, in.county_and_puma, in.dishwasher, in.ducts, in.geometry_floor_area, in.geometry_floor_area_bin, in.geometry_garage, in.has_pv, in.heating_setpoint, in.hot_water_fixtures, in.income, in.income_recs_2015, in.income_recs_2020, in.infiltration, in.insulation_wall, in.lighting, in.misc_hot_tub_spa, in.misc_pool, in.misc_pool_heater, in.misc_pool_pump, in.occupants, in.plug_load_diversity, in.puma, in.pv_orientation, in.pv_system_size, in.usage_level, in.vacancy_status, in.vintage, in.vintage_acs, in.weather_file_city, upgrade.water_heater_efficiency, upgrade.infiltration_reduction, upgrade.clothes_dryer, upgrade.insulation_wall, upgrade.cooking_range, bldg_id"
+
+your_column_list2 <- strsplit(column_string2, ", ")[[1]]
+```
+
+```{r}
+selected_data <- house_static_data[your_column_list2]
+selected_data
+```
+
+```{r}
+merged_data <- merge(aggregated_by_day, selected_data, by = "bldg_id", all.x = TRUE)
+```
+
+```{r}
+merged_data
+```
+
+```{r}
+library(rio)
+library(kernlab)
+library(caret)
+```
+
+```{r}
+merged_data <- merged_data[, 3:53]
+```
+
+
+```{r}
+set.seed(123)
+# splitting the data into a train-test data using 80-20 split 
+trainList <- createDataPartition(y=merged_data$total_energy,p=.80,list=FALSE)
+str(trainList)
+```
+
+
+```{r}
+trainSet <- merged_data[trainList,]
+testSet <- merged_data[-trainList,]
+```
+
+
+```{r}
+linear_model <- lm(total_energy ~. , data = trainSet)
+
+summary(linear_model)
+```
+
+```{r}
+predictions <- predict(linear_model, newdata=testSet)
+```
+
+```{r}
+# root mean squared error
+sqrt(mean((testSet$total_energy - predictions)^2))
+```
+
+```{r}
+# mean squared error
+mean((testSet$total_energy - predictions)^2)
+```
+
+```{r}
+future_data <- merged_data %>%
+  mutate(mean_temperature = mean_temperature + 5)
+```
+
+```{r}
+future_predictions <- predict(linear_model, newdata=future_data)
+```
+
+
+# Neural Networks
+
+
+```{r}
+library(neuralnet)
+```
+
+
+```{r}
+encoded_data <- read_csv('file.csv')
+```
+```{r}
+X <- encoded_data[,2:41]
+Y <- encoded_data[,1]
+```
+
+```{r}
+# Training the model
+# splitting data into batches
+batch_size <- 10
+num_epochs <- 10
+num_batches <- ceiling(nrow(encoded_data) / batch_size)
+
+for (epoch in 1:num_epochs) {
+  for (batch in 1:num_batches) {
+    batch_start <- (batch - 1) * batch_size + 1
+    batch_end <- min(batch * batch_size, nrow(encoded_data))
+    current_batch <- encoded_data[batch_start:batch_end, ]
+
+    nn_model <- neuralnet(
+      total_energy ~ .,
+      data = current_batch,
+      hidden = c(4, 4),
+      linear.output = TRUE,
+      act.fct = "logistic"
+    )
+  }
+}
+
+```
+

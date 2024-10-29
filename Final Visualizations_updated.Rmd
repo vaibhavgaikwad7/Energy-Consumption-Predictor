@@ -1,0 +1,183 @@
+```{r}
+library(tidyverse)
+```
+
+```{r}
+df2 <- read_csv('/Users/punamichowdary/Downloads/final_dataset_less_columns.csv')
+```
+
+
+```{r}
+df <- df2
+```
+
+```{r}
+selected_columns <- c(1, 2,45, 46)
+df[selected_columns]
+```
+
+
+```{r}
+df$datetime <- as.POSIXct(df$datetime)
+```
+
+
+```{r}
+# Group by building ID and calculating total energy usage
+building_totals <- df %>% group_by(bldg_id) %>% 
+  summarize(total_energy_usage = sum(total_energy_usage), .groups = "drop")
+```
+
+```{r}
+parquet_file <- "/Users/punamichowdary/Downloads/static_house_info.parquet"
+
+house_static_data <- arrow::read_parquet(parquet_file)
+```
+
+```{r}
+house_total <- merge(building_totals, house_static_data, by = "bldg_id")
+```
+
+```{r}
+house_total$energy_per_sqft <- house_total$total_energy_usage / house_total$in.sqft
+```
+
+```{r}
+ggplot(house_total, aes(reorder(x = in.lighting, -total_energy_usage), y = total_energy_usage)) +
+  geom_bar(stat = "summary", fun = "mean", fill = "#b4d3b2") +
+  labs(x="Type of Lighting",  y = "Average Energy Consumption") + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+```{r}
+ggplot(house_total, aes(x = in.roof_material, y = total_energy_usage)) +
+  geom_boxplot() +
+  labs(x="Type of Roof Material", y = "Energy Consumption")+ theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+library(ggplot2)
+
+ggplot(house_total, aes(x =in.insulation_floor, y = total_energy_usage)) +
+  geom_boxplot() +
+  stat_summary(fun = "mean", geom = "point", shape = 18, size = 3) +
+  labs(title = "Average Energy Consumption", y = "Average Energy Consumption") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+
+```{r}
+column_string <- "in.ceiling_fan, in.clothes_dryer, in.clothes_washer, in.cooking_range, in.cooling_setpoint, in.county, in.county_and_puma, in.dishwasher, in.ducts, in.geometry_floor_area, in.geometry_floor_area_bin, in.geometry_garage, in.has_pv, in.heating_setpoint, in.hot_water_fixtures, in.income, in.income_recs_2015, in.income_recs_2020, in.infiltration, in.insulation_wall, in.lighting, in.misc_hot_tub_spa, in.misc_pool, in.misc_pool_heater, in.misc_pool_pump, in.occupants, in.plug_load_diversity, in.puma, in.pv_orientation, in.pv_system_size, in.usage_level, in.vacancy_status, in.vintage, in.vintage_acs, in.weather_file_city, upgrade.water_heater_efficiency, upgrade.infiltration_reduction, upgrade.clothes_dryer, upgrade.insulation_wall, upgrade.cooking_range"
+
+your_column_list <- strsplit(column_string, ", ")[[1]]
+```
+
+```{r}
+# Looping through each significant variable and plotting it 
+library(ggplot2)
+
+plot_list <- list()
+
+for (column in your_column_list) {
+  plot <- ggplot(house_total, aes(x = reorder(!!as.name(column), -total_energy_usage), y = total_energy_usage)) +
+    geom_bar(stat = "summary", fun = "mean", fill = "skyblue") +
+    labs(title = paste("Average Energy Consumption -", column), y = "Average Total Energy Consumption") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+    
+  plot_list[[column]] <- plot
+}
+
+for (plot in plot_list) {
+  print(plot)
+}
+
+```
+
+
+```{r}
+#wall material 
+
+wall_material <- full_df %>%
+  group_by(in.geometry_wall_type) %>%
+  summarise(total_energy_usage = mean(total_energy_usage))
+ggplot(data = full_df, aes(x=in.geometry_wall_type, y=total_energy_usage)) + geom_col( fill = "skyblue")
+```
+
+
+```{r}
+#Income vs Total Energy graph
+inc_energy_col2 <- full_df %>%
+  group_by(in.income) %>%
+  summarise(total_energy_usage = mean(total_energy_usage))
+ggplot(data = inc_energy_col2, aes(x=in.income, y=total_energy_usage)) + geom_col(stat = "identity", position = "dodge") + labs(title = "Mean energy used by every income class", x = "Income", y="Mean Energy Used") + theme_minimal() + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+
+
+```{r}
+#map_plot
+sc_map <- map_data("state", region = "south carolina")
+ggplot() +
+  geom_polygon(data = sc_map, aes(x = long, y = lat, group = group), fill = "white", color = "black") +
+  geom_point(data = final, aes(x = in.weather_file_longitude, y = in.weather_file_latitude, size = total_energy_usage), color = "blue", alpha = 0.5) +
+  theme_minimal() + 
+  coord_map() +
+  labs(title = "Energy Consumption in South Carolina",
+       x = "Longitude",
+       y = "Latitude",
+       size = "Total Energy Usage")
+```
+
+
+```{r}
+#Number of Bedrooms vs Energy
+
+library(ggplot2)
+
+sampled_df <- merged_data %>%
+  group_by(in.bedrooms) %>%
+  sample_n(size = 89) %>%
+  ungroup()
+
+
+aggregated_data <- sampled_df %>%
+  group_by(in.bedrooms) %>%
+  summarise(total_energy_usage = sum(total_energy_usage))
+
+# Plot the bar graph
+ggplot(aggregated_data, aes(x = in.bedrooms, y = total_energy_usage)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  labs(title = "Total Energy Used vs Number of Bedrooms",
+       x = "Number of Bedrooms",
+       y = "Total Energy Used") +
+  theme_minimal()
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+
+# Assuming present_data is your dataframe and it has 'date', 'total_energy', and 'predicted_total_energy' columns
+# First, ensure the date is in the correct format
+present_data$date <- as.Date(present_data$date)
+
+# Aggregate the mean of total_energy and predicted_total_energy by date
+agg_data <- present_data %>%
+  group_by(date) %>%
+  summarise(
+    mean_total_energy = mean(total_energy, na.rm = TRUE),
+    mean_predicted_total_energy = mean(predicted_values, na.rm = TRUE)
+  )
+
+# Now plot the aggregated data
+ggplot(agg_data, aes(x = date)) +
+  geom_line(aes(y = mean_total_energy, color = "Actual Total Energy")) +
+  geom_line(aes(y = mean_predicted_total_energy, color = "Predicted Total Energy")) +
+  labs(title = "Average Total vs Predicted Total Energy Consumption",
+       x = "Date",
+       y = "Average Energy Consumption (kWh)") +
+  scale_color_manual(values = c("Actual Total Energy" = "blue", "Predicted Total Energy" = "red")) +
+  theme_minimal()
+```
+

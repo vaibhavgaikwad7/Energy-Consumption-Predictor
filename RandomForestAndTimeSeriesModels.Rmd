@@ -1,0 +1,257 @@
+#MODEL CODE: RANDOM FOREST AND TIME SERIES#
+#note: time series is grouped by county and shows data for each hour of july
+#random forest is grouped by day but shows data for all houses individually, not grouped by county
+
+#RANDOM FOREST#
+
+```{r}
+library(tidyverse)
+library(arrow)
+library(ggplot2)
+```
+
+```{r}
+static_house_info <- read_parquet("https://intro-datascience.s3.us-east-2.amazonaws.com/SC-data/static_house_info.parquet")
+final_dataset_less_columns <- read.csv("~/Desktop/grad school/IST 687 - Intro to Data Science/FinalProject/final_dataset_less_columns.csv")
+df = final_dataset_less_columns
+```
+
+```{r}
+df = df %>%
+  mutate(datetime = if_else(str_detect(datetime, "^\\d{4}-\\d{2}-\\d{2}$"), 
+                        paste(datetime, "00:00:00"), 
+                        datetime))
+```
+
+# Aggregating by day per building 
+
+```{r}
+# Assuming 'df' is your dataframe
+colnames(df)[colnames(df) == "Dry.Bulb.Temperature...C."] <- "temp"
+```
+
+
+```{r}
+library(rlang)
+```
+
+
+```{r}
+aggregated_by_day <- df %>%
+  group_by(bldg_id, date) %>%
+  summarize(
+    total_energy = sum(total_energy_usage),
+    mean_temperature = mean(temp)
+  )
+```
+
+```{r}
+aggregated_by_day
+```
+
+```{r}
+column_string2 <- "in.ceiling_fan, in.clothes_dryer, in.clothes_washer, in.cooking_range, in.cooling_setpoint, in.county_and_puma, in.dishwasher, in.ducts, in.geometry_floor_area, in.geometry_floor_area_bin, in.geometry_garage, in.has_pv, in.heating_setpoint, in.hot_water_fixtures, in.income, in.income_recs_2015, in.income_recs_2020, in.infiltration, in.insulation_wall, in.lighting, in.misc_hot_tub_spa, in.misc_pool, in.misc_pool_heater, in.misc_pool_pump, in.occupants, in.plug_load_diversity, in.puma, in.pv_orientation, in.pv_system_size, in.usage_level, in.vacancy_status, in.vintage, in.vintage_acs, in.weather_file_city, upgrade.water_heater_efficiency, upgrade.infiltration_reduction, upgrade.clothes_dryer, upgrade.insulation_wall, upgrade.cooking_range, bldg_id"
+
+your_column_list2 <- strsplit(column_string2, ", ")[[1]]
+```
+
+```{r}
+selected_data <- static_house_info[your_column_list2]
+selected_data
+```
+
+
+```{r}
+merged_data <- merge(aggregated_by_day, selected_data, by = "bldg_id", all.x = TRUE)
+```
+
+```{r}
+merged_data
+```
+```{r}
+library(rio)
+library(kernlab)
+library(caret)
+```
+
+```{r}
+merged_data <- merged_data[, 3:43]
+```
+
+```{r}
+set.seed(123)
+# splitting the data into a train-test data using 80-20 split 
+trainList <- createDataPartition(y=merged_data$total_energy,p=.80,list=FALSE)
+str(trainList)
+```
+
+
+```{r}
+trainSet <- merged_data[trainList,]
+testSet <- merged_data[-trainList,]
+```
+
+
+```{r}
+library(randomForest)
+```
+
+
+```{r}
+# Random Forest Regression model
+rf_model <- randomForest(total_energy ~ ., ntree=500, mtry=3, importance=TRUE, data = trainSet)
+
+
+print(rf_model)
+
+testSet$pred1 <- predict(rf_model, newdata = testSet)
+sqrt(mean((testSet$total_energy - testSet$pred1)^2)) #rmse: 3.690722
+
+importance(rf_model)
+varImpPlot(rf_model)
+
+#calculating R2 for the random forest model 
+
+# Calculating Total Sum of Squares (TSS)
+TSS <- sum((testSet$total_energy - mean(testSet$pred1))^2)
+# Calculating Sum of Squared Residuals (SSR)
+SSR <- sum((testSet$total_energy - testSet$pred1)^2)
+# Calculating R-squared
+R_squared <- 1 - (SSR/TSS)
+# Print R-squared
+print(R_squared) #0.9245132
+```
+
+
+```{r}
+merged_data <- merge(aggregated_by_day, selected_data, by = "bldg_id", all.x = TRUE)
+#create new df with +5 temperatures
+next_year_df = merged_data
+next_year_df$mean_temperature = next_year_df$mean_temperature +5 #adds 5 to all temperatures
+
+```
+
+```{r}
+#predict rf for next year
+next_year_df$predicted_energy_use <- predict(rf_model, newdata = next_year_df[4:43])
+```
+
+```{r}
+#write df to export
+write.csv(next_year_df, "/Users/megankratzer/Desktop/grad school/IST 687 - Intro to Data Science/FinalProject/next_year_predictions.csv", row.names=F)
+```
+
+```{r}
+#plot
+summarized = next_year_df %>% group_by(date) %>% summarize(sum_predicted = sum(predicted_energy_use),
+                                                 sum_old = sum(total_energy))
+
+
+ggplot() +
+  geom_point(data=summarized, aes(x=date, y=sum_predicted)) +
+  geom_line(data=summarized, aes(x=date, y=sum_predicted, group=1), color='red') +
+  geom_point(data=summarized, aes(x=date, y=sum_old)) +
+  geom_line(data=summarized, aes(x=date, y=sum_old, group=1), color='blue')
+
+```
+
+###########################################################
+###########################################################
+###########################################################
+###########################################################
+
+#TIME SERIES#
+
+```{r}
+library(tidyverse)
+library(arrow)
+library(ggplot2)
+library(caret)
+library(dplyr)
+library(hts)
+library(forecast)
+library(xts)
+```
+
+
+```{r}
+#read in data
+static_house_info <- read_parquet("https://intro-datascience.s3.us-east-2.amazonaws.com/SC-data/static_house_info.parquet")
+final_dataset_less_columns <- read.csv("~/Desktop/grad school/IST 687 - Intro to Data Science/FinalProject/final_dataset_less_columns.csv")
+df = final_dataset_less_columns
+
+df2 = static_house_info[,c('bldg_id','in.sqft','in.city')]
+df1 = df %>% merge(df2, by='bldg_id')
+
+#there was a weird issue with 00:00:00 times
+df1 = df1 %>%
+  mutate(datetime = if_else(str_detect(datetime, "^\\d{4}-\\d{2}-\\d{2}$"), 
+                        paste(datetime, "00:00:00"), 
+                        datetime))
+
+df1$future_temperatures = df1$Dry.Bulb.Temperature...C. + 5
+```
+
+
+```{r}
+####
+df1 <- df1 %>%
+  arrange(bldg_id, datetime)
+names(df1)[names(df1) == 'Dry.Bulb.Temperature...C.'] <- 'temperature'
+
+df_county <- df1 %>%
+  group_by(in.county, datetime) %>%
+  summarise(total_energy_usage = sum(total_energy_usage),
+            average_temperature = mean(temperature)) %>%
+  ungroup()
+```
+
+```{r}
+# Unique list of cities
+counties <- unique(df_county$in.county)
+
+# Placeholder for model and forecast results
+original_county_energy = list()
+models <- list()
+forecasts <- list()
+
+for (county in counties) {
+  # Subset historical data for the city
+  county_data <- filter(df_county, in.county == county)
+  county_data <- county_data[order(county_data$datetime), ]
+  
+  ts_energy <- ts(county_data$total_energy_usage, frequency = 24)
+  original_county_energy[[county]] = ts_energy
+  
+  ts_temp <- ts(county_data$average_temperature, frequency = 24)
+
+  
+  # Fit ARIMA model with temperature as an external regressor
+  model <- auto.arima(ts_energy, xreg = ts_temp)
+  
+  # Store the model
+  models[[county]] <- model
+  
+  # Prepare aggregated future temperature data for the city
+  future_temp_data <- filter(df1, in.county == county)
+  future_temp_data <- future_temp_data[order(future_temp_data$datetime), ]
+  future_county_temp <- aggregate(future_temp_data$future_temperatures,  by=list(future_temp_data$datetime), mean)
+  
+  future_temp_ts <- ts(future_county_temp$x, frequency = 24)
+  
+  # Ensure length of future_temp_ts matches expected forecast length
+  forecast_length <- 24 * 31  # for one month (July) of hourly data
+  if (length(future_temp_ts) != forecast_length) {
+    stop("Future temperature data length mismatch for county: ", county)
+  }
+  
+  # Forecast energy usage using the model and future temperature data
+  forecasts[[county]] <- forecast(model, xreg = future_temp_ts, h = forecast_length)
+  print(county)
+}
+```
+
+```{r}
+#plot examples for 1 county
+plot(forecasts[[1]])
+```
